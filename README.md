@@ -6,7 +6,7 @@ Simple GUI application that fetches and audibly reads the current price of a sto
 
 ## How to Run (Executable - Windows)
 
-1.  Download the `stock_readout.exe` file from releases.
+1.  1. [Download](https://github.com/swxk19/AudioStockPrice/releases/download/1.0/stock_readout.exe) the `stock_readout.exe` file from releases.
 2.  Double-click the `stock_readout.exe` file to run the application.
 
 ## Usage
