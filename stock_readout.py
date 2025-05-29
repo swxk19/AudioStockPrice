@@ -74,7 +74,7 @@ def _tts_worker():
         _tts_engine_ready_event.set() # Signal that engine is ready
 
         while True:
-            text, voice_id = _tts_queue.get()
+            text, voice_id = _tts_queue.get() # Blocks until an item is available
             if text is None: # Sentinel value to stop the thread
                 break
             
@@ -92,7 +92,8 @@ def _tts_worker():
             _tts_engine.stop()
             _tts_engine.endLoop()
 
-def stock_update_loop(ticker_entry, interval_entry, price_label, selected_voice_id):
+# Modified stock_update_loop to take voice_combobox directly
+def stock_update_loop(ticker_entry, interval_entry, price_label, voice_combobox):
     global running
     last_valid_interval = 5
     last_valid_ticker = ticker_entry.get().strip()
@@ -139,6 +140,16 @@ def stock_update_loop(ticker_entry, interval_entry, price_label, selected_voice_
             time.sleep(1)
             continue
 
+        # Dynamically get selected voice ID in each loop iteration
+        selected_voice_name = voice_combobox.get()
+        selected_voice_id = None
+        if _tts_engine and selected_voice_name != "Download More Voices...":
+            voices = _tts_engine.getProperty('voices')
+            for voice in voices:
+                if voice.name == selected_voice_name:
+                    selected_voice_id = voice.id
+                    break
+        
         price = get_stock_price(current_ticker)
         if price is not None:
             price_str = f"${price:.2f}"
@@ -178,27 +189,35 @@ def start_stop_reading(ticker_entry, interval_entry, price_label, start_button, 
             price_label.config(text=f"{ticker.upper()}\nChecking price...", style="TLabel")
 
 
-        if _tts_engine: # Check if the engine was successfully initialized
-            voices = _tts_engine.getProperty('voices')
-            for voice in voices:
-                if voice.name == selected_voice_name:
-                    selected_voice_id = voice.id
-                    break
-        else:
+        if not _tts_engine:
             price_label.config(text="Error: TTS engine not initialized.", style="Error.TLabel")
             return
 
         running = True
         start_button.config(text="Stop Reading")
         
-        thread = threading.Thread(target=stock_update_loop, args=(ticker_entry, interval_entry, price_label, selected_voice_id))
+        thread = threading.Thread(target=stock_update_loop, args=(ticker_entry, interval_entry, price_label, voice_combobox))
         thread.daemon = True
         thread.start()
 
-def _perform_apply_changes_validation(ticker_entry, interval_entry, price_label):
-    """Actual validation logic for Apply Changes button, called after a short delay."""
+# Modified apply_changes_to_display to act as a stop-then-start macro
+def apply_changes_to_display(ticker_entry, interval_entry, price_label, voice_combobox, start_button):
+    global running
+
+    # First, stop the current reading process if it's running
+    if running:
+        running = False
+        # Give the thread a moment to recognize the 'running = False'
+        time.sleep(0.1) 
+        start_button.config(text="Start Reading")
+        price_label.config(text="Stock Price: --.--", style="TLabel")
+
+    # Now, re-validate and start a new process with the current inputs
+    # This effectively re-uses the logic from the 'else' block of start_stop_reading
     ticker = ticker_entry.get().strip()
     interval_str = interval_entry.get().strip()
+    selected_voice_name = voice_combobox.get()
+    selected_voice_id = None
 
     if not ticker:
         price_label.config(text="Error: Stock ticker cannot be empty.", style="Error.TLabel")
@@ -211,12 +230,37 @@ def _perform_apply_changes_validation(ticker_entry, interval_entry, price_label)
     if not check_stock_exists(ticker):
         price_label.config(text=f"Error: '{ticker.upper()}' does not exist.", style="Error.TLabel")
         return
+    else:
+        price_label.config(text=f"{ticker.upper()}\nChecking price...", style="TLabel")
 
-def apply_changes_to_display(ticker_entry, interval_entry, price_label, root_instance):
-    """Schedules the validation for Apply Changes button after a short delay."""
-    price_label.config(text="Processing changes...", style="TLabel") # Immediate feedback
-    # Schedule the actual validation after 100ms
-    root_instance.after(100, lambda: _perform_apply_changes_validation(ticker_entry, interval_entry, price_label))
+    if _tts_engine:
+        voices = _tts_engine.getProperty('voices')
+        for voice in voices:
+            if voice.name == selected_voice_name:
+                selected_voice_id = voice.id
+                break
+        if selected_voice_id: # Apply voice change immediately
+            _tts_engine.setProperty('voice', selected_voice_id)
+            print(f"Voice set to: {selected_voice_name}")
+        elif selected_voice_name == "Download More Voices...":
+            open_voice_download_link() # Open link if selected
+            price_label.config(text="Opened voice download link.", style="TLabel")
+            return # Don't start if download link was the action
+        else:
+            print(f"Warning: Voice '{selected_voice_name}' not found or TTS engine not initialized.")
+            price_label.config(text="Error: Voice not found or TTS init failed.", style="Error.TLabel")
+            return
+    else:
+        price_label.config(text="Error: TTS engine not initialized.", style="Error.TLabel")
+        return
+
+    running = True
+    start_button.config(text="Stop Reading")
+    
+    thread = threading.Thread(target=stock_update_loop, args=(ticker_entry, interval_entry, price_label, voice_combobox))
+    thread.daemon = True
+    thread.start()
+
 
 def open_voice_download_link():
     webbrowser.open("https://support.microsoft.com/en-us/topic/download-languages-and-voices-for-immersive-reader-read-mode-and-read-aloud-4c83a8d8-7486-42f7-8e46-2b0fdf753130")
@@ -227,14 +271,13 @@ def main_app():
     root.geometry("400x300")
     root.resizable(False, False)
 
-    # Start the TTS worker thread immediately
     tts_worker_thread = threading.Thread(target=_tts_worker, daemon=True)
     tts_worker_thread.start()
 
     def on_closing():
         global running
         running = False
-        _tts_queue.put((None, None)) # Send sentinel to stop the TTS worker thread
+        _tts_queue.put((None, None))
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -263,8 +306,7 @@ def main_app():
 
     ttk.Label(main_frame, text="Select Voice:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
     voice_names = []
-    # Wait for the TTS engine to be ready before populating voices
-    _tts_engine_ready_event.wait(timeout=5) # Wait up to 5 seconds for the engine to init
+    _tts_engine_ready_event.wait(timeout=5)
 
     if _tts_engine_ready_event.is_set() and _tts_engine:
         try:
@@ -306,7 +348,7 @@ def main_app():
     start_button.grid(row=4, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
 
     apply_button = ttk.Button(main_frame, text="Apply Changes",
-                              command=lambda: apply_changes_to_display(ticker_entry, interval_entry, price_label, root))
+                              command=lambda: apply_changes_to_display(ticker_entry, interval_entry, price_label, voice_combobox, start_button))
     apply_button.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
     root.mainloop()
