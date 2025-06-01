@@ -1,6 +1,6 @@
 # TTS Stock Price Reader
 
-Simple GUI application that fetches and audibly reads the current price of a stock ticker by TTS.
+Simple GUI application that fetches and audibly reads the current price of a stock ticker by TTS so you can always know the price of a stock without looking at its chart.
 
 ![UI](./assets/1.png)
 
